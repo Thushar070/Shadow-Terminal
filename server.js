@@ -1,14 +1,18 @@
+// ===================================================================
+// CRASH PROTECTION — log but don't exit in production
+// ===================================================================
 process.on('uncaughtException', err => {
-  console.error('UNCAUGHT EXCEPTION:', err.message);
+  console.error('[FATAL] UNCAUGHT EXCEPTION:', err.message);
   console.error(err.stack);
-  process.exit(1);
 });
 
 process.on('unhandledRejection', (reason) => {
-  console.error('UNHANDLED REJECTION:', reason);
-  process.exit(1);
+  console.error('[FATAL] UNHANDLED REJECTION:', reason);
 });
 
+// ===================================================================
+// IMPORTS
+// ===================================================================
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const bcrypt = require('bcryptjs');
@@ -25,25 +29,21 @@ const { signToken } = require('./auth');
 const { authMiddleware } = require('./middleware');
 const pkg = require('./package.json');
 
+// ===================================================================
+// APP SETUP
+// ===================================================================
 const app = express();
-
-// Railway injects PORT env var. We MUST listen on whatever Railway gives us,
-// because Railway's load balancer routes traffic to that exact port.
-// Locally it falls back to 3000.
 const PORT = process.env.PORT || 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
 
-console.log('--- STARTUP INFO ---');
-console.log(`PORT: ${PORT}`);
-console.log(`NODE_ENV: ${process.env.NODE_ENV}`);
-console.log(`IS_PROD: ${IS_PROD}`);
-console.log(`__dirname: ${__dirname}`);
-console.log('--------------------');
+console.log('[STARTUP] PORT=' + PORT + ' NODE_ENV=' + process.env.NODE_ENV + ' __dirname=' + __dirname);
 
 // Trust Railway proxy for rate limiting and cookies
 app.set('trust proxy', 1);
 
-// Middleware
+// ===================================================================
+// MIDDLEWARE (correct order)
+// ===================================================================
 app.use(morgan(IS_PROD ? 'combined' : 'dev'));
 app.use(compression());
 app.use(express.json());
@@ -71,7 +71,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
 }));
 
 // ===================================================================
-// HEALTH CHECK
+// HEALTH CHECK — no DB dependency
 // ===================================================================
 
 app.get('/health', (req, res) => {
@@ -141,7 +141,7 @@ function cookieOpts() {
     httpOnly: true,
     secure: IS_PROD,
     sameSite: 'strict',
-    domain: process.env.COOKIE_DOMAIN,
+    domain: process.env.COOKIE_DOMAIN || undefined,
     maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
   };
 }
@@ -481,7 +481,7 @@ app.get('/api/leaderboard', (req, res) => {
 });
 
 // ===================================================================
-// SERVE FRONTEND
+// SERVE FRONTEND — SPA fallback
 // ===================================================================
 
 app.get('*', (req, res) => {
@@ -493,7 +493,7 @@ app.get('*', (req, res) => {
 // ===================================================================
 
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error('[ERROR]', err.stack);
   res.status(500).json({
     error: IS_PROD ? 'Internal server error' : err.message
   });
@@ -506,19 +506,39 @@ app.use((err, req, res, next) => {
 let server;
 
 async function main() {
-  // Initialize DB first, then listen
-  console.log('Initializing database...');
-  await db.getDb();
-  console.log('Database initialized.');
+  // 1. Initialize database
+  console.log('[STARTUP] Initializing database...');
+  try {
+    await db.getDb();
+    console.log('[STARTUP] Database initialized.');
+  } catch (err) {
+    console.error('[STARTUP] Database init error:', err.message);
+    // Continue anyway so healthcheck can respond
+  }
 
+  // 2. Listen on the PORT env var (Railway injects this, e.g. 8080)
   server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log('[STARTUP] Server listening on port ' + PORT);
   });
+
+  // 3. ALSO listen on port 3000 if PORT is different
+  //    Railway's load balancer may route HTTP traffic to port 3000
+  //    (cached from a previous railway.toml port=3000 setting)
+  //    while healthcheck uses PORT=8080. This dual-listen covers both.
+  const portNum = parseInt(PORT, 10);
+  if (portNum !== 3000) {
+    const server2 = app.listen(3000, '0.0.0.0', () => {
+      console.log('[STARTUP] Server also listening on port 3000');
+    });
+    server2.on('error', (err) => {
+      console.warn('[STARTUP] Could not also bind port 3000:', err.message);
+    });
+  }
 }
 
 process.on('SIGTERM', () => {
   console.log('SIGTERM received. Shutting down gracefully.');
-  db.close();
+  try { db.close(); } catch (e) { /* ignore */ }
   if (server) {
     server.close(() => {
       console.log('Server closed.');
@@ -530,6 +550,6 @@ process.on('SIGTERM', () => {
 });
 
 main().catch(err => {
-  console.error('Startup failed:', err);
+  console.error('[STARTUP] Fatal error:', err);
   process.exit(1);
 });
