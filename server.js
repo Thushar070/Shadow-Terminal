@@ -26,6 +26,7 @@ const { authMiddleware } = require('./middleware');
 const pkg = require('./package.json');
 
 const app = express();
+// Force port 3000 as requested by user and configured in railway.toml
 const PORT = process.env.PORT || 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
 
