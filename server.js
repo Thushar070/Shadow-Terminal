@@ -15,12 +15,15 @@ const bcrypt = require('bcryptjs');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
+const morgan = require('morgan');
+const compression = require('compression');
 require('dotenv').config();
 
 const db = require('./db');
 const MISSIONS = require('./missions');
 const { signToken } = require('./auth');
 const { authMiddleware } = require('./middleware');
+const pkg = require('./package.json');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -29,30 +32,37 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 // Trust Railway proxy for rate limiting and cookies
 app.set('trust proxy', 1);
 
-// Cookie options — environment-aware
-function cookieOpts() {
-  return {
-    httpOnly: true,
-    secure: IS_PROD,
-    sameSite: IS_PROD ? 'strict' : 'lax',
-    maxAge: 24 * 3600000
-  };
-}
+// Middleware
+app.use(morgan(IS_PROD ? 'combined' : 'dev'));
+app.use(compression());
+app.use(express.json());
+app.use(cookieParser());
 
 // Security
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrcAttr: ["'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-      fontSrc: ["https://fonts.gstatic.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
       connectSrc: ["'self'"],
-      imgSrc: ["'self'", "data:"]
-    },
+      imgSrc: ["'self'", "data:"],
+    }
   },
+  hsts: IS_PROD ? { maxAge: 31536000, includeSubDomains: true } : false
 }));
+
+// Cookie options — environment-aware
+function cookieOpts() {
+  return {
+    httpOnly: true,
+    secure: IS_PROD,
+    sameSite: 'strict',
+    domain: process.env.COOKIE_DOMAIN,
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+  };
+}
 
 // Rate Limiting
 const authLimiter = rateLimit({
@@ -67,9 +77,24 @@ const cmdLimiter = rateLimit({
   message: { error: 'Command rate limit exceeded' }
 });
 
-app.use(express.json());
-app.use(cookieParser());
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve static files with caching
+app.use(express.static(path.join(__dirname, 'public'), {
+  maxAge: IS_PROD ? '1d' : '0',
+  etag: true
+}));
+
+// ===================================================================
+// HEALTH CHECK
+// ===================================================================
+
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    version: pkg.version
+  });
+});
 
 // ===================================================================
 // HELPERS
@@ -158,13 +183,11 @@ app.post('/api/register', authLimiter, (req, res) => {
 
   try {
     const hash = bcrypt.hashSync(password, 12);
-    db.run('INSERT INTO users (username, password_hash) VALUES (?, ?)', [username, hash]);
-    const { id } = db.get('SELECT last_insert_rowid() as id');
-    const token = signToken({ id, username });
+    const result = db.run('INSERT INTO users (username, password_hash) VALUES (?, ?)', [username, hash]);
+    const token = signToken({ id: result.lastInsertRowid, username });
     res.cookie('token', token, cookieOpts());
     res.json({ success: true, user: { username, xp: 0, rank: "ROOKIE", score: 0 } });
   } catch (err) {
-    console.error('Register error:', err);
     res.status(400).json({ error: 'Username taken' });
   }
 });
@@ -182,7 +205,7 @@ app.post('/api/login', authLimiter, (req, res) => {
 });
 
 app.post('/api/logout', (req, res) => {
-  res.clearCookie('token').json({ success: true });
+  res.clearCookie('token', { ...cookieOpts(), maxAge: 0 }).json({ success: true });
 });
 
 // ===================================================================
@@ -447,14 +470,6 @@ app.get('/api/leaderboard', (req, res) => {
 });
 
 // ===================================================================
-// HEALTH CHECK (Railway uses this)
-// ===================================================================
-
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime() });
-});
-
-// ===================================================================
 // SERVE FRONTEND
 // ===================================================================
 
@@ -463,15 +478,41 @@ app.get('*', (req, res) => {
 });
 
 // ===================================================================
-// STARTUP
+// GLOBAL ERROR HANDLER
 // ===================================================================
+
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({
+    error: IS_PROD ? 'Internal server error' : err.message
+  });
+});
+
+// ===================================================================
+// STARTUP & GRACEFUL SHUTDOWN
+// ===================================================================
+
+let server;
 
 async function main() {
   await db.getDb(); // init DB before listening
-  app.listen(PORT, '0.0.0.0', () => {
+  server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
   });
 }
+
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received. Shutting down gracefully.');
+  db.close();
+  if (server) {
+    server.close(() => {
+      console.log('Server closed.');
+      process.exit(0);
+    });
+  } else {
+    process.exit(0);
+  }
+});
 
 main().catch(err => {
   console.error('Startup failed:', err);
