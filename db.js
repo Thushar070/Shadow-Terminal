@@ -1,7 +1,12 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const db = new Database(path.join(__dirname, 'shadow.db'));
+// Railway filesystem is ephemeral — /tmp is the only writable path in production
+const DB_PATH = process.env.NODE_ENV === 'production'
+  ? '/tmp/shadow-terminal.db'
+  : path.join(__dirname, 'shadow-terminal.db');
+
+const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 
 // Initialize database schema

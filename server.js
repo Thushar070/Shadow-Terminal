@@ -13,18 +13,32 @@ const { authMiddleware } = require('./middleware');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const IS_PROD = process.env.NODE_ENV === 'production';
+
+// Trust Railway proxy for rate limiting and cookies
+app.set('trust proxy', 1);
+
+// Cookie options — environment-aware
+function cookieOpts() {
+  return {
+    httpOnly: true,
+    secure: IS_PROD,
+    sameSite: IS_PROD ? 'strict' : 'lax',
+    maxAge: 24 * 3600000
+  };
+}
 
 // Security
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
-      "default-src": ["'self'"],
-      "script-src": ["'self'", "'unsafe-inline'"],
-      "script-src-attr": ["'unsafe-inline'"],
-      "connect-src": ["'self'"],
-      "font-src": ["'self'", "https://fonts.gstatic.com"],
-      "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-      "img-src": ["'self'", "data:"]
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrcAttr: ["'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["https://fonts.gstatic.com"],
+      connectSrc: ["'self'"],
+      imgSrc: ["'self'", "data:"]
     },
   },
 }));
@@ -134,7 +148,7 @@ app.post('/api/register', authLimiter, (req, res) => {
     const hash = bcrypt.hashSync(password, 12);
     const result = db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(username, hash);
     const token = signToken({ id: result.lastInsertRowid, username });
-    res.cookie('token', token, { httpOnly: true, sameSite: 'strict', maxAge: 24 * 3600000 });
+    res.cookie('token', token, cookieOpts());
     res.json({ success: true, user: { username, xp: 0, rank: "ROOKIE", score: 0 } });
   } catch (err) {
     res.status(400).json({ error: 'Username taken' });
@@ -149,7 +163,7 @@ app.post('/api/login', authLimiter, (req, res) => {
   }
 
   const token = signToken({ id: user.id, username: user.username });
-  res.cookie('token', token, { httpOnly: true, sameSite: 'strict', maxAge: 24 * 3600000 });
+  res.cookie('token', token, cookieOpts());
   res.json({ success: true, user: { username: user.username, xp: user.xp, rank: getRank(user.xp), score: user.score } });
 });
 
@@ -416,6 +430,14 @@ app.get('/api/leaderboard', (req, res) => {
     LIMIT 10
   `).all();
   res.json(scores);
+});
+
+// ===================================================================
+// HEALTH CHECK (Railway uses this)
+// ===================================================================
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', uptime: process.uptime() });
 });
 
 // ===================================================================
