@@ -53,6 +53,27 @@ app.use(helmet({
   hsts: IS_PROD ? { maxAge: 31536000, includeSubDomains: true } : false
 }));
 
+// Serve static files (Required Fix 1 & 6)
+app.use(express.static(path.join(__dirname, 'public'), {
+  maxAge: IS_PROD ? '1d' : '0',
+  etag: true
+}));
+
+// Root Route (Required Fix 2)
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    version: pkg.version
+  });
+});
+
 // Cookie options — environment-aware
 function cookieOpts() {
   return {
@@ -75,25 +96,6 @@ const cmdLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 60,
   message: { error: 'Command rate limit exceeded' }
-});
-
-// Serve static files with caching
-app.use(express.static(path.join(__dirname, 'public'), {
-  maxAge: IS_PROD ? '1d' : '0',
-  etag: true
-}));
-
-// ===================================================================
-// HEALTH CHECK
-// ===================================================================
-
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
-    version: pkg.version
-  });
 });
 
 // ===================================================================
@@ -334,11 +336,9 @@ app.post('/api/command', authMiddleware, cmdLimiter, (req, res) => {
   const mission = MISSIONS[session.mission_idx];
   const step = mission.steps[session.step_idx];
 
-  // Case-insensitive, trimmed, partial match
   const matched = step.keys.some(k => {
     const kLower = k.toLowerCase();
     if (command === kLower) return true;
-    // Partial match: same base command and contains key arguments
     const cmdBase = command.split(' ')[0];
     const kBase = kLower.split(' ')[0];
     if (cmdBase === kBase) {
@@ -394,7 +394,6 @@ app.post('/api/command', authMiddleware, cmdLimiter, (req, res) => {
       timerRemaining: session.timer_remaining
     });
   } else {
-    // Wrong command
     session.wrong_streak++;
     let livesLost = 0;
     let timeBonus = 0;
@@ -470,7 +469,7 @@ app.get('/api/leaderboard', (req, res) => {
 });
 
 // ===================================================================
-// SERVE FRONTEND
+// FALLBACK ROUTE — SPA Support (Required Fix 3 & 4)
 // ===================================================================
 
 app.get('*', (req, res) => {
@@ -489,7 +488,7 @@ app.use((err, req, res, next) => {
 });
 
 // ===================================================================
-// STARTUP & GRACEFUL SHUTDOWN
+// STARTUP & GRACEFUL SHUTDOWN (Required Fix 5)
 // ===================================================================
 
 let server;
