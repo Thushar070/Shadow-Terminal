@@ -6,7 +6,7 @@
 
 ## 🚀 Live Demo
 
-
+https://shadow-terminal-production.up.railway.app/
 
 ## 🧠 Overview
 
