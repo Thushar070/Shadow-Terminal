@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Shadow Terminal — An immersive hacker simulation game. Infiltrate systems, complete missions, and rise through the ranks.">
+<title>Shadow Terminal</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --green: #00ff88;
+    --green-dim: #00aa55;
+    --green-glow: #00ff8844;
+    --red: #ff3355;
+    --amber: #ffcc00;
+    --blue: #00aaff;
+    --bg: #050a07;
+    --bg2: #080f0a;
+    --bg3: #0d1a10;
+    --border: #00ff8820;
+    --border2: #00ff8840;
+    --text: #88ffcc;
+    --mono: 'Share Tech Mono', monospace;
+    --display: 'Orbitron', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--green); font-family: var(--mono); overflow: hidden; user-select: none; -webkit-user-select: none; }
+
+  /* SCANLINES OVERLAY */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.08) 2px, rgba(0,0,0,0.08) 4px);
+    pointer-events: none; z-index: 9999;
+  }
+
+  /* BOOT SCREEN */
+  #boot {
+    position: fixed; inset: 0; background: var(--bg);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    z-index: 1000; transition: opacity 0.8s;
+  }
+  #boot-logo {
+    font-family: var(--display); font-size: clamp(28px,5vw,56px); font-weight: 900;
+    color: var(--green); letter-spacing: 8px; text-align: center;
+    text-shadow: 0 0 40px var(--green), 0 0 80px var(--green-glow);
+    animation: pulse 2s infinite;
+  }
+  #boot-sub { font-size: 13px; color: var(--green-dim); letter-spacing: 4px; margin-top: 8px; }
+  #boot-log { margin-top: 40px; width: 380px; font-size: 12px; color: var(--green-dim); }
+  #boot-log div { margin: 3px 0; opacity: 0; animation: fadein 0.3s forwards; }
+  #boot-bar-wrap { margin-top: 20px; width: 380px; height: 3px; background: var(--bg3); border-radius: 2px; overflow: hidden; }
+  #boot-bar { height: 100%; width: 0; background: var(--green); transition: width 0.2s; box-shadow: 0 0 10px var(--green); }
+  #boot-btn { margin-top: 32px; font-family: var(--display); font-size: 13px; letter-spacing: 3px; padding: 12px 32px; background: transparent; border: 1px solid var(--green); color: var(--green); cursor: pointer; display: none; transition: all 0.2s; }
+  #boot-btn:hover { background: var(--green); color: var(--bg); box-shadow: 0 0 20px var(--green); }
+  #boot-resume { margin-top: 12px; font-family: var(--display); font-size: 11px; letter-spacing: 2px; padding: 10px 28px; background: transparent; border: 1px solid var(--amber); color: var(--amber); cursor: pointer; display: none; transition: all 0.2s; }
+  #boot-resume:hover { background: var(--amber); color: var(--bg); box-shadow: 0 0 20px var(--amber); }
+
+  /* MAIN LAYOUT */
+  #app { display: none; height: 100vh; flex-direction: column; }
+
+  /* TOPBAR */
+  #topbar {
+    background: var(--bg2); border-bottom: 1px solid var(--border2);
+    padding: 10px 20px; display: flex; align-items: center; justify-content: space-between;
+    flex-shrink: 0;
+  }
+  #topbar-title { font-family: var(--display); font-size: 14px; letter-spacing: 4px; color: var(--green); }
+  #topbar-stats { display: flex; gap: 20px; font-size: 12px; }
+  .stat { color: var(--green-dim); }
+  .stat span { color: var(--green); font-weight: 700; }
+  #lives-display { display: flex; gap: 4px; }
+  .life { width: 10px; height: 10px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); transition: all 0.3s; }
+  .life.dead { background: var(--bg3); box-shadow: none; }
+
+  /* BODY SPLIT */
+  #body { display: flex; flex: 1; overflow: hidden; }
+
+  /* SIDE PANEL */
+  #sidebar {
+    width: 280px; background: var(--bg2); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; flex-shrink: 0; overflow-y: auto;
+  }
+  #mission-header { padding: 16px; border-bottom: 1px solid var(--border); }
+  #mission-label { font-size: 10px; letter-spacing: 3px; color: var(--green-dim); margin-bottom: 6px; }
+  #mission-name { font-family: var(--display); font-size: 13px; color: var(--green); line-height: 1.4; }
+  #mission-progress { margin-top: 12px; }
+  #prog-label { font-size: 11px; color: var(--green-dim); margin-bottom: 6px; display: flex; justify-content: space-between; }
+  #prog-bar { height: 3px; background: var(--bg3); border-radius: 2px; overflow: hidden; }
+  #prog-fill { height: 100%; background: var(--green); width: 0; transition: width 0.5s; box-shadow: 0 0 8px var(--green); }
+  #objective-box { padding: 16px; border-bottom: 1px solid var(--border); }
+  #obj-label { font-size: 10px; letter-spacing: 3px; color: var(--green-dim); margin-bottom: 10px; }
+  .obj-item { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; font-size: 12px; color: var(--text); line-height: 1.5; }
+  .obj-item.done { color: var(--green-dim); text-decoration: line-through; }
+  .obj-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green-dim); margin-top: 5px; flex-shrink: 0; }
+  .obj-item.done .obj-dot { background: var(--green); }
+  #tools-box { padding: 16px; border-bottom: 1px solid var(--border); }
+  #tools-label { font-size: 10px; letter-spacing: 3px; color: var(--green-dim); margin-bottom: 10px; }
+  .tool-item { font-size: 12px; padding: 6px 10px; background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; margin-bottom: 6px; color: var(--green); display: flex; justify-content: space-between; }
+  .tool-item .tool-status { font-size: 10px; color: var(--green-dim); }
+  #timer-box { padding: 16px; }
+  #timer-label { font-size: 10px; letter-spacing: 3px; color: var(--green-dim); margin-bottom: 6px; }
+  #timer-display { font-family: var(--display); font-size: 28px; color: var(--green); text-shadow: 0 0 20px var(--green); }
+  #timer-display.warn { color: var(--amber); text-shadow: 0 0 20px var(--amber); animation: pulse 0.5s infinite; }
+  #timer-display.danger { color: var(--red); text-shadow: 0 0 20px var(--red); }
+
+  /* MAIN TERMINAL AREA */
+  #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  #terminal {
+    flex: 1; overflow-y: auto; padding: 16px 20px;
+    scroll-behavior: smooth;
+  }
+  #terminal::-webkit-scrollbar { width: 4px; }
+  #terminal::-webkit-scrollbar-track { background: transparent; }
+  #terminal::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+  .t-line { margin-bottom: 3px; font-size: 13px; line-height: 1.7; word-break: break-all; }
+  .t-prompt { color: var(--green); }
+  .t-output { color: var(--text); }
+  .t-success { color: var(--green); font-weight: bold; }
+  .t-error { color: var(--red); }
+  .t-warn { color: var(--amber); }
+  .t-info { color: var(--blue); }
+  .t-dim { color: #446655; }
+  .t-system { color: var(--green-dim); font-style: italic; }
+  .t-glitch { animation: glitch 0.3s steps(2) infinite; }
+
+  /* INPUT */
+  #input-row {
+    border-top: 1px solid var(--border2); background: var(--bg2);
+    padding: 12px 20px; display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  }
+  #prompt-label { color: var(--green); font-size: 13px; white-space: nowrap; flex-shrink: 0; }
+  #cmd-input {
+    flex: 1; background: transparent; border: none; outline: none;
+    color: var(--green); font-family: var(--mono); font-size: 13px;
+    caret-color: var(--green);
+  }
+  #cmd-input::placeholder { color: #1a4a2a; }
+  #hint-btn {
+    font-family: var(--mono); font-size: 11px; padding: 5px 12px;
+    background: transparent; border: 1px solid var(--amber); color: var(--amber);
+    cursor: pointer; border-radius: 2px; transition: all 0.2s; white-space: nowrap;
+  }
+  #hint-btn:hover { background: var(--amber); color: var(--bg); }
+
+  /* QUICK ACTIONS */
+  #quick-btns {
+    padding: 8px 20px; background: var(--bg2); border-top: 1px solid var(--border);
+    display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0;
+  }
+  .qbtn {
+    font-family: var(--mono); font-size: 11px; padding: 5px 12px;
+    background: var(--bg3); border: 1px solid var(--border2); color: var(--green-dim);
+    cursor: pointer; border-radius: 2px; transition: all 0.2s;
+  }
+  .qbtn:hover { border-color: var(--green); color: var(--green); background: #0a2010; }
+
+  /* OVERLAY SCREENS */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(5,10,7,0.95);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    z-index: 500; opacity: 0; pointer-events: none; transition: opacity 0.5s;
+  }
+  .overlay.show { opacity: 1; pointer-events: all; }
+  .overlay-title { font-family: var(--display); font-size: clamp(24px,4vw,48px); font-weight: 900; letter-spacing: 6px; text-align: center; margin-bottom: 16px; }
+  .overlay-sub { font-size: 13px; color: var(--green-dim); letter-spacing: 3px; margin-bottom: 40px; }
+  .overlay-btn { font-family: var(--display); font-size: 12px; letter-spacing: 3px; padding: 12px 28px; background: transparent; border: 1px solid var(--green); color: var(--green); cursor: pointer; margin: 8px; transition: all 0.2s; }
+  .overlay-btn:hover { background: var(--green); color: var(--bg); box-shadow: 0 0 20px var(--green); }
+  .overlay-btn.red { border-color: var(--red); color: var(--red); }
+  .overlay-btn.red:hover { background: var(--red); color: var(--bg); box-shadow: 0 0 20px var(--red); }
+  #mission-complete-title { color: var(--green); text-shadow: 0 0 40px var(--green); }
+  #gameover-title { color: var(--red); text-shadow: 0 0 40px var(--red); }
+  #final-title { color: var(--green); text-shadow: 0 0 40px var(--green); }
+  .score-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 24px 0; }
+  .score-card { background: var(--bg3); border: 1px solid var(--border2); padding: 16px 24px; text-align: center; }
+  .score-card-label { font-size: 11px; color: var(--green-dim); letter-spacing: 2px; margin-bottom: 8px; }
+  .score-card-val { font-family: var(--display); font-size: 28px; color: var(--green); }
+  #leaderboard { width: 360px; margin-top: 16px; }
+  .lb-row { display: flex; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .lb-row:first-child { color: var(--amber); }
+  .lb-rank { color: var(--green-dim); width: 24px; }
+
+  /* AUTH UI */
+  #auth-overlay { z-index: 2000; }
+  .auth-card {
+    background: var(--bg2); border: 1px solid var(--green); padding: 40px;
+    width: 100%; max-width: 400px; box-shadow: 0 0 50px var(--green-glow);
+    display: flex; flex-direction: column; gap: 20px;
+  }
+  .auth-input {
+    background: var(--bg3); border: 1px solid var(--border2);
+    padding: 12px 16px; color: var(--green); font-family: var(--mono);
+    font-size: 14px; outline: none; transition: border-color 0.2s;
+  }
+  .auth-input:focus { border-color: var(--green); }
+  .auth-error { color: var(--red); font-size: 12px; min-height: 18px; text-align: center; }
+  .auth-toggle { font-size: 12px; color: var(--green-dim); text-align: center; cursor: pointer; text-decoration: underline; }
+  #auth-title { font-family: var(--display); font-size: 24px; color: var(--green); text-align: center; letter-spacing: 4px; }
+
+  /* ACHIEVEMENT POPUP */
+  @keyframes slideup { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  #achievement-toast {
+    position: fixed; bottom: 20px; right: 20px; background: var(--bg2); border: 1px solid var(--amber);
+    padding: 15px 25px; display: none; flex-direction: column; gap: 5px; z-index: 3000;
+    box-shadow: 0 0 30px #ffcc0033; animation: slideup 0.5s ease forwards;
+  }
+  #ach-label { font-size: 10px; color: var(--amber); letter-spacing: 2px; }
+  #ach-name { font-family: var(--display); font-size: 13px; color: #fff; }
+
+  /* ANIMATIONS */
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+  @keyframes fadein { to { opacity: 1; } }
+  @keyframes glitch {
+    0% { transform: translate(0); }
+    25% { transform: translate(-2px, 1px); filter: hue-rotate(90deg); }
+    50% { transform: translate(2px, -1px); }
+    75% { transform: translate(-1px, 2px); filter: hue-rotate(-90deg); }
+    100% { transform: translate(0); }
+  }
+  @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0;} }
+  .cursor::after { content: '_'; animation: blink 1s infinite; color: var(--green); }
+  @keyframes slidein { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  .t-line { animation: slidein 0.15s ease forwards; }
+  @keyframes shake { 0%,100%{transform:translateX(0);} 20%{transform:translateX(-6px);} 40%{transform:translateX(6px);} 60%{transform:translateX(-4px);} 80%{transform:translateX(4px);} }
+  .shake { animation: shake 0.4s ease; }
+</style>
+</head>
+<body>
+
+<div id="achievement-toast">
+  <div id="ach-label">ACHIEVEMENT UNLOCKED</div>
+  <div id="ach-name">—</div>
+</div>
+
+<!-- AUTH OVERLAY -->
+<div class="overlay" id="auth-overlay">
+  <div class="auth-card">
+    <div id="auth-title">LOGIN</div>
+    <div class="auth-error" id="auth-error"></div>
+    <input type="text" id="auth-username" class="auth-input" placeholder="USERNAME" maxlength="16" />
+    <input type="password" id="auth-password" class="auth-input" placeholder="PASSWORD" />
+    <button class="overlay-btn" id="auth-submit" onclick="handleAuthSubmit()">[ EXECUTE ]</button>
+    <div class="auth-toggle" id="auth-toggle" onclick="toggleAuthMode()">Don't have an account? Register</div>
+  </div>
+</div>
+
+<!-- BOOT SCREEN -->
+<div id="boot">
+  <div id="boot-logo">SHADOW TERMINAL</div>
+  <div id="boot-sub">CLASSIFIED OPERATION // <span id="agent-name">AGENT ZERO</span></div>
+  <div id="boot-log"></div>
+  <div id="boot-bar-wrap"><div id="boot-bar"></div></div>
+  <button id="boot-btn" onclick="startGame()">[ INITIALIZE MISSION ]</button>
+  <button id="boot-resume" onclick="resumeGame()">[ RESUME MISSION ]</button>
+</div>
+
+<!-- MAIN APP -->
+<div id="app">
+  <!-- TOPBAR -->
+  <div id="topbar">
+    <div id="topbar-title">SHADOW TERMINAL // <span id="topbar-user">AGENT ZERO</span> (<span id="topbar-rank">ROOKIE</span>)</div>
+    <div id="topbar-stats">
+      <div class="stat">XP <span id="stat-xp">0</span></div>
+      <div class="stat">SCORE <span id="stat-score">0</span></div>
+      <div class="stat">LIVES <div id="lives-display"><div class="life"></div><div class="life"></div><div class="life"></div></div></div>
+    </div>
+  </div>
+
+  <div id="body">
+    <!-- SIDEBAR -->
+    <div id="sidebar">
+      <div id="mission-header">
+        <div id="mission-label">CURRENT MISSION</div>
+        <div id="mission-name">—</div>
+        <div id="mission-progress">
+          <div id="prog-label"><span>PROGRESS</span><span id="prog-pct">0%</span></div>
+          <div id="prog-bar"><div id="prog-fill"></div></div>
+        </div>
+      </div>
+      <div id="objective-box">
+        <div id="obj-label">OBJECTIVES</div>
+        <div id="objectives-list"></div>
+      </div>
+      <div id="tools-box">
+        <div id="tools-label">TOOLKIT</div>
+        <div id="tools-list"></div>
+      </div>
+      <div id="timer-box">
+        <div id="timer-label">TIME REMAINING</div>
+        <div id="timer-display">00:00</div>
+      </div>
+    </div>
+
+    <!-- MAIN TERMINAL -->
+    <div id="main">
+      <div id="terminal"></div>
+      <div id="input-row">
+        <span id="prompt-label">agent@shadow:~$</span>
+        <input id="cmd-input" type="text" placeholder="enter command..." autocomplete="off" spellcheck="false" autocorrect="off" />
+        <button id="hint-btn" onclick="showHint()">[ HINT -50XP ]</button>
+      </div>
+      <div id="quick-btns"></div>
+    </div>
+  </div>
+</div>
+
+<!-- OVERLAYS -->
+<div class="overlay" id="mission-complete-overlay">
+  <div class="overlay-title" id="mission-complete-title">MISSION COMPLETE</div>
+  <div class="overlay-sub">ACCESS GRANTED</div>
+  <div class="score-grid">
+    <div class="score-card"><div class="score-card-label">XP EARNED</div><div class="score-card-val" id="mc-xp">+0</div></div>
+    <div class="score-card"><div class="score-card-label">TIME BONUS</div><div class="score-card-val" id="mc-time">+0</div></div>
+  </div>
+  <button class="overlay-btn" onclick="nextMission()">[ NEXT MISSION ]</button>
+</div>
+
+<div class="overlay" id="gameover-overlay">
+  <div class="overlay-title" id="gameover-title">SYSTEM BREACH</div>
+  <div class="overlay-sub">CRITICAL FAILURE DETECTED</div>
+  <div class="score-card" style="margin:24px 0;padding:20px 40px;"><div class="score-card-label">FINAL SCORE</div><div class="score-card-val" id="go-score">0</div></div>
+  <button class="overlay-btn" onclick="restartFull()">[ RESTART GAME ]</button>
+</div>
+
+<div class="overlay" id="final-overlay">
+  <div class="overlay-title" id="final-title">OPERATION COMPLETE</div>
+  <div class="overlay-sub">MEGACORP HAS BEEN EXPOSED. AGENT ZERO WINS.</div>
+  <div class="score-grid">
+    <div class="score-card"><div class="score-card-label">TOTAL SCORE</div><div class="score-card-val" id="final-score">0</div></div>
+    <div class="score-card"><div class="score-card-label">TOTAL XP</div><div class="score-card-val" id="final-xp">0</div></div>
+  </div>
+  <div id="leaderboard"></div>
+  <button class="overlay-btn" onclick="restartFull()" style="margin-top:24px">[ PLAY AGAIN ]</button>
+</div>
+
+<script>
+// ============================================================
+// DISABLE DEV TOOLS — F12, Ctrl+Shift+I, Right-Click
+// ============================================================
+(function() {
+  document.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+  document.addEventListener('keydown', function(e) {
+    // F12
+    if (e.key === 'F12' || e.keyCode === 123) { e.preventDefault(); e.stopPropagation(); return false; }
+    // Ctrl+Shift+I
+    if (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i' || e.keyCode === 73)) { e.preventDefault(); e.stopPropagation(); return false; }
+    // Ctrl+Shift+J (console)
+    if (e.ctrlKey && e.shiftKey && (e.key === 'J' || e.key === 'j' || e.keyCode === 74)) { e.preventDefault(); e.stopPropagation(); return false; }
+    // Ctrl+Shift+C (inspector)
+    if (e.ctrlKey && e.shiftKey && (e.key === 'C' || e.key === 'c' || e.keyCode === 67)) { e.preventDefault(); e.stopPropagation(); return false; }
+    // Ctrl+U (view source)
+    if (e.ctrlKey && (e.key === 'U' || e.key === 'u' || e.keyCode === 85)) { e.preventDefault(); e.stopPropagation(); return false; }
+  });
+})();
+
+// ============================================================
+// UI STATE — No game logic, no mission data, no answers
+// ============================================================
+let user = null;
+let session = null;
+let authMode = 'login';
+let timerInterval = null;
+let currentTimer = 0;
+let cmdHistory = [];
+let historyPos = -1;
+let hasExistingSession = false;
+
+const cmdInput = document.getElementById('cmd-input');
+const term = document.getElementById('terminal');
+
+// ============================================================
+// AUTH & BOOT
+// ============================================================
+function toggleAuthMode() {
+  authMode = authMode === 'login' ? 'register' : 'login';
+  document.getElementById('auth-title').textContent = authMode.toUpperCase();
+  document.getElementById('auth-toggle').textContent = authMode === 'login' ? "Don't have an account? Register" : "Already have an account? Login";
+  document.getElementById('auth-error').textContent = '';
+}
+
+// Allow Enter key to submit auth
+document.getElementById('auth-password').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') handleAuthSubmit();
+});
+document.getElementById('auth-username').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') document.getElementById('auth-password').focus();
+});
+
+async function handleAuthSubmit() {
+  const username = document.getElementById('auth-username').value.trim();
+  const password = document.getElementById('auth-password').value;
+  const errorEl = document.getElementById('auth-error');
+
+  if (!username || !password) {
+    errorEl.textContent = 'All fields required';
+    return;
+  }
+
+  try {
+    const endpoint = authMode === 'login' ? '/api/login' : '/api/register';
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      errorEl.textContent = data.error || 'Authentication failed';
+      return;
+    }
+
+    user = data.user;
+    onAuthSuccess();
+  } catch (err) {
+    errorEl.textContent = 'Server unreachable';
+  }
+}
+
+async function checkAuth() {
+  try {
+    const resp = await fetch('/api/me');
+    if (resp.ok) {
+      user = await resp.json();
+      onAuthSuccess();
+    } else {
+      showOverlay('auth-overlay');
+    }
+  } catch (err) {
+    showOverlay('auth-overlay');
+  }
+}
+
+async function onAuthSuccess() {
+  hideOverlay('auth-overlay');
+  document.getElementById('agent-name').textContent = user.username;
+  document.getElementById('topbar-user').textContent = user.username;
+  document.getElementById('topbar-rank').textContent = user.rank;
+  document.getElementById('prompt-label').textContent = 'agent@' + user.username.toLowerCase() + ':~$';
+
+  // Check for existing active session to enable resume
+  try {
+    const resp = await fetch('/api/session');
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.status === 'active') {
+        hasExistingSession = true;
+      }
+    }
+  } catch (e) {}
+
+  runBoot();
+}
+
+const bootLines = [
+  "[SYS] Initializing secure kernel...",
+  "[NET] Establishing encrypted tunnel...",
+  "[SEC] Loading agent credentials...",
+  "[OPS] Decrypting mission files...",
+  "[AI]  Briefing: Shadow Protocol engaged.",
+  "[SYS] All systems nominal. Standing by."
+];
+
+function runBoot() {
+  const log = document.getElementById('boot-log');
+  const bar = document.getElementById('boot-bar');
+  log.innerHTML = '';
+  let i = 0;
+  const interval = setInterval(function() {
+    if (i >= bootLines.length) {
+      clearInterval(interval);
+      document.getElementById('boot-btn').style.display = 'block';
+      if (hasExistingSession) {
+        document.getElementById('boot-resume').style.display = 'block';
+      }
+      return;
+    }
+    const d = document.createElement('div');
+    d.textContent = bootLines[i];
+    log.appendChild(d);
+    i++;
+    bar.style.width = Math.round((i / bootLines.length) * 100) + '%';
+  }, 400);
+}
+
+async function startGame() {
+  try {
+    const resp = await fetch('/api/session/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    session = await resp.json();
+    transitionToApp();
+  } catch (e) {
+    console.error("Failed to start session", e);
+  }
+}
+
+async function resumeGame() {
+  try {
+    const resp = await fetch('/api/session');
+    if (resp.ok) {
+      session = await resp.json();
+      transitionToApp();
+    } else {
+      // If session is gone, start fresh
+      startGame();
+    }
+  } catch (e) {
+    startGame();
+  }
+}
+
+function transitionToApp() {
+  document.getElementById('boot').style.opacity = '0';
+  setTimeout(function() {
+    document.getElementById('boot').style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
+    initUI();
+    cmdInput.focus();
+  }, 800);
+}
+
+// ============================================================
+// UI UPDATES — All data comes from server responses
+// ============================================================
+function initUI() {
+  updateSessionUI();
+  term.innerHTML = '';
+  typeLines([
+    { cls: 'dim', text: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' },
+    { cls: 'info', text: '  ' + session.missionName },
+    { cls: 'dim', text: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' },
+    { cls: 'system', text: '' },
+    { cls: 'system', text: '  BRIEFING: ' + session.missionStory },
+    { cls: 'system', text: '' },
+    { cls: 'warn', text: '  > Mission objectives updated. Type "help" for tools.' },
+  ], 40);
+}
+
+function updateSessionUI() {
+  if (!session) return;
+  document.getElementById('mission-name').textContent = session.missionName;
+  document.getElementById('stat-xp').textContent = session.xp;
+  document.getElementById('stat-score').textContent = session.score;
+
+  // Progress
+  var totalSteps = session.objectives ? session.objectives.length : 1;
+  var pct = Math.round((session.stepIdx / totalSteps) * 100);
+  document.getElementById('prog-fill').style.width = pct + '%';
+  document.getElementById('prog-pct').textContent = pct + '%';
+
+  // Objectives
+  var objList = document.getElementById('objectives-list');
+  objList.innerHTML = '';
+  if (session.objectives) {
+    session.objectives.forEach(function(obj) {
+      var el = document.createElement('div');
+      el.className = 'obj-item' + (obj.done ? ' done' : '');
+      el.innerHTML = '<div class="obj-dot"></div><div>' + escapeHtml(obj.text) + '</div>';
+      objList.appendChild(el);
+    });
+  }
+
+  // Tools
+  var toolList = document.getElementById('tools-list');
+  toolList.innerHTML = '';
+  if (session.tools) {
+    session.tools.forEach(function(t) {
+      var el = document.createElement('div');
+      el.className = 'tool-item';
+      el.innerHTML = '<span>' + escapeHtml(t.name) + '</span><span class="tool-status">' + escapeHtml(t.desc) + '</span>';
+      toolList.appendChild(el);
+    });
+  }
+
+  // Lives
+  var dots = document.querySelectorAll('.life');
+  dots.forEach(function(d, i) { d.classList.toggle('dead', i >= session.lives); });
+
+  // Quick buttons
+  var qb = document.getElementById('quick-btns');
+  qb.innerHTML = '';
+  if (session.tools) {
+    session.tools.forEach(function(t) {
+      var b = document.createElement('button');
+      b.className = 'qbtn';
+      b.textContent = t.name;
+      b.onclick = function() { cmdInput.value = t.name + ' '; cmdInput.focus(); };
+      qb.appendChild(b);
+    });
+  }
+
+  // Timer sync from server
+  currentTimer = session.timerRemaining;
+  startLocalTimer();
+}
+
+function startLocalTimer() {
+  clearInterval(timerInterval);
+  var display = document.getElementById('timer-display');
+  updateTimerDisplay();
+  timerInterval = setInterval(function() {
+    if (currentTimer <= 0) {
+      clearInterval(timerInterval);
+      return;
+    }
+    currentTimer--;
+    updateTimerDisplay();
+  }, 1000);
+}
+
+function updateTimerDisplay() {
+  var display = document.getElementById('timer-display');
+  var m = Math.floor(currentTimer / 60);
+  var s = currentTimer % 60;
+  display.textContent = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  display.className = '';
+  if (currentTimer <= 60) display.classList.add('danger');
+  else if (currentTimer <= 120) display.classList.add('warn');
+}
+
+function escapeHtml(text) {
+  var d = document.createElement('div');
+  d.textContent = text;
+  return d.innerHTML;
+}
+
+// ============================================================
+// COMMAND HANDLING — Pure UI, no validation
+// ============================================================
+cmdInput.addEventListener('keydown', async function(e) {
+  if (e.key === 'Enter') {
+    var val = cmdInput.value.trim();
+    if (!val) return;
+    cmdHistory.unshift(val);
+    historyPos = -1;
+    cmdInput.value = '';
+    await processCommand(val);
+  }
+  if (e.key === 'ArrowUp') {
+    if (cmdHistory.length === 0) return;
+    historyPos = Math.min(historyPos + 1, cmdHistory.length - 1);
+    cmdInput.value = cmdHistory[historyPos] || '';
+    e.preventDefault();
+  }
+  if (e.key === 'ArrowDown') {
+    if (cmdHistory.length === 0) return;
+    historyPos = Math.max(historyPos - 1, -1);
+    cmdInput.value = historyPos === -1 ? '' : cmdHistory[historyPos];
+    e.preventDefault();
+  }
+});
+
+async function processCommand(raw) {
+  var input = raw.toLowerCase().trim();
+
+  // Frontend-only: clear terminal
+  if (input === 'clear') {
+    term.innerHTML = '';
+    return;
+  }
+
+  // Frontend-only: logout
+  if (input === 'logout') {
+    await fetch('/api/logout', { method: 'POST' });
+    location.reload();
+    return;
+  }
+
+  // Show typed command as prompt line
+  var promptText = 'agent@' + (user ? user.username.toLowerCase() : 'shadow') + ':~$ ' + raw;
+  addLine(promptText, 'prompt');
+
+  // Send to server — server handles ALL validation and logic
+  try {
+    var resp = await fetch('/api/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: raw })
+    });
+    var data = await resp.json();
+
+    if (!resp.ok) {
+      addLine('[!] ' + (data.error || 'Command rejected'), 'error');
+      return;
+    }
+
+    if (data.result === 'success' || data.result === 'info') {
+      if (data.response) addLine(data.response, data.result === 'success' ? 'success' : 'info');
+
+      // Show achievements
+      if (data.achievements && data.achievements.length > 0) {
+        data.achievements.forEach(showAchievement);
+      }
+
+      if (data.result === 'success') {
+        // Update local UI state from server data
+        session.stepIdx = data.newStepIdx;
+        session.objectives = data.objectives;
+        if (data.timerRemaining !== undefined) session.timerRemaining = data.timerRemaining;
+
+        // Refresh full session from server for accurate xp/score
+        try {
+          var sResp = await fetch('/api/session');
+          if (sResp.ok) {
+            var sData = await sResp.json();
+            session.xp = sData.xp;
+            session.score = sData.score;
+            session.lives = sData.lives;
+            session.timerRemaining = sData.timerRemaining;
+          }
+        } catch (e2) {
+          // If session fetch fails, approximate from response
+          session.xp += data.xp;
+          session.score += data.xp;
+        }
+        updateSessionUI();
+
+        if (data.missionDone) {
+          setTimeout(function() { handleMissionComplete(data.completionData); }, 1000);
+        }
+      }
+    } else if (data.result === 'wrong') {
+      addLine(data.message, 'error');
+      session.lives = data.lives;
+      session.wrongStreak = data.wrongStreak;
+      if (data.timerRemaining !== undefined) session.timerRemaining = data.timerRemaining;
+      if (data.livesLost > 0) {
+        document.getElementById('input-row').classList.add('shake');
+        setTimeout(function() { document.getElementById('input-row').classList.remove('shake'); }, 400);
+      }
+      updateSessionUI();
+    } else if (data.result === 'gameover' || data.result === 'timeout') {
+      if (data.result === 'timeout') addLine('[!] CONNECTION TIMEOUT: Security lockout triggered.', 'error');
+      document.getElementById('go-score').textContent = data.score;
+      showOverlay('gameover-overlay');
+    }
+  } catch (e) {
+    addLine('[!] System error: Connection to server lost.', 'error');
+  }
+}
+
+async function showHint() {
+  try {
+    var resp = await fetch('/api/hint', { method: 'POST' });
+    var data = await resp.json();
+    if (resp.ok) {
+      addLine('[HINT] ' + data.hint, 'warn');
+      session.xp = data.xp;
+      updateSessionUI();
+    } else {
+      addLine('[!] ' + data.error, 'error');
+    }
+  } catch (e) {
+    addLine('[!] Failed to retrieve hint.', 'error');
+  }
+}
+
+async function handleMissionComplete(completionData) {
+  try {
+    var resp = await fetch('/api/me');
+    user = await resp.json();
+    document.getElementById('stat-xp').textContent = user.xp;
+    document.getElementById('topbar-rank').textContent = user.rank;
+
+    if (completionData) {
+      document.getElementById('mc-xp').textContent = '+' + completionData.xpEarned;
+      document.getElementById('mc-time').textContent = '+' + completionData.timeBonus;
+    } else {
+      document.getElementById('mc-xp').textContent = '+' + session.xp;
+      document.getElementById('mc-time').textContent = '+' + Math.max(0, currentTimer * 2);
+    }
+    showOverlay('mission-complete-overlay');
+  } catch (e) {
+    showOverlay('mission-complete-overlay');
+  }
+}
+
+async function nextMission() {
+  hideOverlay('mission-complete-overlay');
+  try {
+    var resp = await fetch('/api/session/next-mission', { method: 'POST' });
+    if (resp.ok) {
+      session = await resp.json();
+      initUI();
+    } else {
+      var data = await resp.json();
+      if (data.error === 'No more missions') {
+        showFinal();
+      }
+    }
+  } catch (e) {}
+}
+
+async function showFinal() {
+  document.getElementById('final-score').textContent = session.score;
+  document.getElementById('final-xp').textContent = user.xp;
+  renderLeaderboard();
+  showOverlay('final-overlay');
+}
+
+async function restartFull() {
+  try {
+    await fetch('/api/session/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ replay: true })
+    });
+  } catch (e) {}
+  location.reload();
+}
+
+function showAchievement(key) {
+  var toast = document.getElementById('achievement-toast');
+  var name = document.getElementById('ach-name');
+  var labels = {
+    'first_blood': 'FIRST BLOOD',
+    'no_hints': 'NO HINTS NEEDED',
+    'speedrun': 'SPEEDRUN',
+    'ghost_protocol': 'GHOST PROTOCOL',
+    'untouchable': 'UNTOUCHABLE'
+  };
+  name.textContent = labels[key] || key.toUpperCase().replace(/_/g, ' ');
+  toast.style.display = 'flex';
+  setTimeout(function() { toast.style.display = 'none'; }, 4000);
+}
+
+// ============================================================
+// TERMINAL RENDERING
+// ============================================================
+function addLine(text, cls) {
+  cls = cls || 'output';
+  var lines = text.split('\n');
+  lines.forEach(function(l) {
+    var d = document.createElement('div');
+    d.className = 't-line t-' + cls;
+    d.textContent = l;
+    term.appendChild(d);
+  });
+  term.scrollTop = term.scrollHeight;
+}
+
+function typeLines(lines, delay) {
+  delay = delay || 60;
+  var i = 0;
+  function next() {
+    if (i >= lines.length) return;
+    addLine(lines[i].text, lines[i].cls || 'output');
+    i++;
+    setTimeout(next, delay);
+  }
+  next();
+}
+
+// ============================================================
+// OVERLAYS & LEADERBOARD
+// ============================================================
+function showOverlay(id) {
+  document.getElementById(id).classList.add('show');
+}
+function hideOverlay(id) {
+  document.getElementById(id).classList.remove('show');
+}
+
+async function renderLeaderboard() {
+  try {
+    var resp = await fetch('/api/leaderboard');
+    var lb = await resp.json();
+    var el = document.getElementById('leaderboard');
+    el.innerHTML = '<div class="lb-row" style="color:var(--green-dim);font-size:11px;letter-spacing:2px"><span>RANK</span><span>AGENT</span><span>SCORE</span></div>';
+    lb.forEach(function(r, i) {
+      var row = document.createElement('div');
+      row.className = 'lb-row';
+      row.innerHTML = '<span class="lb-rank">#' + (i + 1) + '</span><span>' + escapeHtml(r.username) + '</span><span style="color:var(--green)">' + r.score + '</span>';
+      el.appendChild(row);
+    });
+  } catch (e) {}
+}
+
+// ============================================================
+// INIT
+// ============================================================
+checkAuth();
+</script>
+</body>
+</html>
