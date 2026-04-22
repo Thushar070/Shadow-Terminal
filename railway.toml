@@ -6,7 +6,7 @@ startCommand = "node server.js"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 5
 healthcheckPath = "/health"
-healthcheckTimeout = 10
+healthcheckTimeout = 30
 port = 3000
 
 [environments.production]

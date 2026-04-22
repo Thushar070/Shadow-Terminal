@@ -26,8 +26,7 @@ const { authMiddleware } = require('./middleware');
 const pkg = require('./package.json');
 
 const app = express();
-// Force port 3000 for Railway deployment
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
 
 // Trust Railway proxy for rate limiting and cookies
@@ -480,10 +479,13 @@ app.use((err, req, res, next) => {
 let server;
 
 async function main() {
-  await db.getDb(); // init DB before listening
   server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
   });
+  
+  console.log('Initializing database...');
+  await db.getDb(); 
+  console.log('Database initialized.');
 }
 
 process.on('SIGTERM', () => {
