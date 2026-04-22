@@ -1,3 +1,14 @@
+process.on('uncaughtException', err => {
+  console.error('UNCAUGHT EXCEPTION:', err.message);
+  console.error(err.stack);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('UNHANDLED REJECTION:', reason);
+  process.exit(1);
+});
+
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const bcrypt = require('bcryptjs');
@@ -82,7 +93,8 @@ function stripHtml(str) {
 
 function updateSessionTimer(session) {
   const now = new Date();
-  const lastTick = new Date(session.last_tick + (session.last_tick.endsWith('Z') ? '' : 'Z'));
+  const lastTickStr = session.last_tick;
+  const lastTick = new Date(lastTickStr + (lastTickStr.endsWith('Z') ? '' : 'Z'));
   const elapsed = Math.floor((now - lastTick) / 1000);
 
   if (elapsed > 0) {
@@ -116,7 +128,7 @@ function checkAchievements(userId, session, missionIdx, final = false) {
 
   const add = (key) => {
     try {
-      db.prepare('INSERT INTO user_achievements (user_id, achievement_key) VALUES (?, ?)').run(userId, key);
+      db.run('INSERT INTO user_achievements (user_id, achievement_key) VALUES (?, ?)', [userId, key]);
       newAchievements.push(key);
     } catch (e) { /* already unlocked */ }
   };
@@ -146,18 +158,20 @@ app.post('/api/register', authLimiter, (req, res) => {
 
   try {
     const hash = bcrypt.hashSync(password, 12);
-    const result = db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(username, hash);
-    const token = signToken({ id: result.lastInsertRowid, username });
+    db.run('INSERT INTO users (username, password_hash) VALUES (?, ?)', [username, hash]);
+    const { id } = db.get('SELECT last_insert_rowid() as id');
+    const token = signToken({ id, username });
     res.cookie('token', token, cookieOpts());
     res.json({ success: true, user: { username, xp: 0, rank: "ROOKIE", score: 0 } });
   } catch (err) {
+    console.error('Register error:', err);
     res.status(400).json({ error: 'Username taken' });
   }
 });
 
 app.post('/api/login', authLimiter, (req, res) => {
   const { username, password } = req.body;
-  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+  const user = db.get('SELECT * FROM users WHERE username = ?', [username]);
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
@@ -176,12 +190,12 @@ app.post('/api/logout', (req, res) => {
 // ===================================================================
 
 app.get('/api/me', authMiddleware, (req, res) => {
-  const user = db.prepare('SELECT username, xp, score, missions_completed FROM users WHERE id = ?').get(req.user.id);
+  const user = db.get('SELECT username, xp, score, missions_completed FROM users WHERE id = ?', [req.user.id]);
   if (!user) {
     res.clearCookie('token');
     return res.status(401).json({ error: 'User not found' });
   }
-  const achievements = db.prepare('SELECT achievement_key FROM user_achievements WHERE user_id = ?').all(req.user.id);
+  const achievements = db.all('SELECT achievement_key FROM user_achievements WHERE user_id = ?', [req.user.id]);
   res.json({
     ...user,
     rank: getRank(user.xp),
@@ -194,12 +208,12 @@ app.get('/api/me', authMiddleware, (req, res) => {
 // ===================================================================
 
 app.get('/api/session', authMiddleware, (req, res) => {
-  let session = db.prepare('SELECT * FROM game_sessions WHERE user_id = ?').get(req.user.id);
+  let session = db.get('SELECT * FROM game_sessions WHERE user_id = ?', [req.user.id]);
   if (!session) return res.status(404).json({ error: 'No active session' });
 
   updateSessionTimer(session);
-  db.prepare('UPDATE game_sessions SET timer_remaining = ?, last_tick = ? WHERE id = ?')
-    .run(session.timer_remaining, session.last_tick, session.id);
+  db.run('UPDATE game_sessions SET timer_remaining = ?, last_tick = ? WHERE id = ?', 
+    [session.timer_remaining, session.last_tick, session.id]);
 
   const data = buildSessionResponse(session);
   if (!data) return res.status(400).json({ error: 'Invalid session state' });
@@ -212,21 +226,21 @@ app.post('/api/session/start', authMiddleware, (req, res) => {
   const now = new Date().toISOString();
 
   if (replay) {
-    db.prepare('UPDATE users SET score = 0 WHERE id = ?').run(req.user.id);
+    db.run('UPDATE users SET score = 0 WHERE id = ?', [req.user.id]);
   }
 
-  db.prepare(`
+  db.run(`
     INSERT OR REPLACE INTO game_sessions
     (user_id, mission_idx, step_idx, lives, timer_remaining, wrong_streak, xp, score, hint_count, status, last_tick)
     VALUES (?, 0, 0, 3, ?, 0, 0, 0, 0, 'active', ?)
-  `).run(req.user.id, mission.time, now);
+  `, [req.user.id, mission.time, now]);
 
-  const session = db.prepare('SELECT * FROM game_sessions WHERE user_id = ?').get(req.user.id);
+  const session = db.get('SELECT * FROM game_sessions WHERE user_id = ?', [req.user.id]);
   res.json(buildSessionResponse(session));
 });
 
 app.post('/api/session/next-mission', authMiddleware, (req, res) => {
-  let session = db.prepare('SELECT * FROM game_sessions WHERE user_id = ?').get(req.user.id);
+  let session = db.get('SELECT * FROM game_sessions WHERE user_id = ?', [req.user.id]);
   if (!session || session.status !== 'complete') return res.status(400).json({ error: 'Mission not complete' });
 
   const nextIdx = session.mission_idx + 1;
@@ -235,14 +249,14 @@ app.post('/api/session/next-mission', authMiddleware, (req, res) => {
   const nextMission = MISSIONS[nextIdx];
   const now = new Date().toISOString();
 
-  db.prepare(`
+  db.run(`
     UPDATE game_sessions SET
     mission_idx = ?, step_idx = 0, timer_remaining = ?, wrong_streak = 0,
     xp = 0, hint_count = 0, status = 'active', last_tick = ?
     WHERE id = ?
-  `).run(nextIdx, nextMission.time, now, session.id);
+  `, [nextIdx, nextMission.time, now, session.id]);
 
-  const updated = db.prepare('SELECT * FROM game_sessions WHERE user_id = ?').get(req.user.id);
+  const updated = db.get('SELECT * FROM game_sessions WHERE user_id = ?', [req.user.id]);
   res.json(buildSessionResponse(updated));
 });
 
@@ -256,15 +270,15 @@ app.post('/api/command', authMiddleware, cmdLimiter, (req, res) => {
   command = stripHtml(command).toLowerCase().trim();
   if (!command) return res.status(400).json({ error: 'Empty command' });
 
-  let session = db.prepare('SELECT * FROM game_sessions WHERE user_id = ?').get(req.user.id);
+  let session = db.get('SELECT * FROM game_sessions WHERE user_id = ?', [req.user.id]);
   if (!session || session.status !== 'active') return res.status(400).json({ error: 'No active session' });
 
   updateSessionTimer(session);
 
   // Check timeout
   if (session.timer_remaining <= 0) {
-    db.prepare('UPDATE game_sessions SET status = "failed", timer_remaining = 0, last_tick = ? WHERE id = ?')
-      .run(session.last_tick, session.id);
+    db.run('UPDATE game_sessions SET status = "failed", timer_remaining = 0, last_tick = ? WHERE id = ?', 
+      [session.last_tick, session.id]);
     return res.json({ result: "timeout", score: session.score });
   }
 
@@ -285,8 +299,8 @@ app.post('/api/command', authMiddleware, cmdLimiter, (req, res) => {
     });
   }
   if (command === 'profile') {
-    const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-    const achCount = db.prepare('SELECT COUNT(*) as c FROM user_achievements WHERE user_id = ?').get(req.user.id).c;
+    const u = db.get('SELECT * FROM users WHERE id = ?', [req.user.id]);
+    const { c: achCount } = db.get('SELECT COUNT(*) as c FROM user_achievements WHERE user_id = ?', [req.user.id]);
     return res.json({
       result: "info",
       response: `╔══════════════════════════╗\n║  AGENT PROFILE           ║\n╠══════════════════════════╣\n║  NAME:  ${u.username.padEnd(17)}║\n║  RANK:  ${getRank(u.xp).padEnd(17)}║\n║  XP:    ${String(u.xp).padEnd(17)}║\n║  SCORE: ${String(u.score).padEnd(17)}║\n║  ACHV:  ${String(achCount + '/5').padEnd(17)}║\n╚══════════════════════════╝`
@@ -329,20 +343,20 @@ app.post('/api/command', authMiddleware, cmdLimiter, (req, res) => {
 
       achievements = checkAchievements(req.user.id, session, session.mission_idx, true);
 
-      db.prepare('INSERT INTO mission_completions (user_id, mission_idx, xp_earned, time_bonus) VALUES (?, ?, ?, ?)')
-        .run(req.user.id, session.mission_idx, session.xp, timeBonus);
+      db.run('INSERT INTO mission_completions (user_id, mission_idx, xp_earned, time_bonus) VALUES (?, ?, ?, ?)', 
+        [req.user.id, session.mission_idx, session.xp, timeBonus]);
 
-      db.prepare('UPDATE users SET xp = xp + ?, score = score + ?, missions_completed = ? WHERE id = ?')
-        .run(session.xp, session.score, session.mission_idx + 1, req.user.id);
+      db.run('UPDATE users SET xp = xp + ?, score = score + ?, missions_completed = ? WHERE id = ?', 
+        [session.xp, session.score, session.mission_idx + 1, req.user.id]);
 
-      db.prepare('INSERT INTO scores (user_id, score, mission) VALUES (?, ?, ?)')
-        .run(req.user.id, session.score, session.mission_idx + 1);
+      db.run('INSERT INTO scores (user_id, score, mission) VALUES (?, ?, ?)', 
+        [req.user.id, session.score, session.mission_idx + 1]);
 
       completionData = { xpEarned: session.xp, timeBonus, totalScore: session.score };
     }
 
-    db.prepare('UPDATE game_sessions SET step_idx = ?, xp = ?, score = ?, wrong_streak = ?, status = ?, timer_remaining = ?, last_tick = ? WHERE id = ?')
-      .run(session.step_idx, session.xp, session.score, session.wrong_streak, session.status, session.timer_remaining, session.last_tick, session.id);
+    db.run('UPDATE game_sessions SET step_idx = ?, xp = ?, score = ?, wrong_streak = ?, status = ?, timer_remaining = ?, last_tick = ? WHERE id = ?', 
+      [session.step_idx, session.xp, session.score, session.wrong_streak, session.status, session.timer_remaining, session.last_tick, session.id]);
 
     return res.json({
       result: "success",
@@ -374,8 +388,8 @@ app.post('/api/command', authMiddleware, cmdLimiter, (req, res) => {
       session.status = 'failed';
     }
 
-    db.prepare('UPDATE game_sessions SET lives = ?, wrong_streak = ?, timer_remaining = ?, status = ?, last_tick = ? WHERE id = ?')
-      .run(session.lives, session.wrong_streak, session.timer_remaining, session.status, session.last_tick, session.id);
+    db.run('UPDATE game_sessions SET lives = ?, wrong_streak = ?, timer_remaining = ?, status = ?, last_tick = ? WHERE id = ?', 
+      [session.lives, session.wrong_streak, session.timer_remaining, session.status, session.last_tick, session.id]);
 
     if (session.status === 'failed') {
       return res.json({ result: "gameover", score: session.score });
@@ -398,7 +412,7 @@ app.post('/api/command', authMiddleware, cmdLimiter, (req, res) => {
 // ===================================================================
 
 app.post('/api/hint', authMiddleware, (req, res) => {
-  let session = db.prepare('SELECT * FROM game_sessions WHERE user_id = ?').get(req.user.id);
+  let session = db.get('SELECT * FROM game_sessions WHERE user_id = ?', [req.user.id]);
   if (!session || session.status !== 'active') return res.status(400).json({ error: 'No active session' });
 
   if (session.xp < 50) return res.status(400).json({ error: 'Not enough XP (need 50)' });
@@ -410,8 +424,8 @@ app.post('/api/hint', authMiddleware, (req, res) => {
   session.score = Math.max(0, session.score - 50);
   session.hint_count++;
 
-  db.prepare('UPDATE game_sessions SET xp = ?, score = ?, hint_count = ? WHERE id = ?')
-    .run(session.xp, session.score, session.hint_count, session.id);
+  db.run('UPDATE game_sessions SET xp = ?, score = ?, hint_count = ? WHERE id = ?', 
+    [session.xp, session.score, session.hint_count, session.id]);
 
   res.json({ hint: step.hint, xp: session.xp });
 });
@@ -421,14 +435,14 @@ app.post('/api/hint', authMiddleware, (req, res) => {
 // ===================================================================
 
 app.get('/api/leaderboard', (req, res) => {
-  const scores = db.prepare(`
+  const scores = db.all(`
     SELECT u.username, MAX(s.score) as score
     FROM scores s
     JOIN users u ON s.user_id = u.id
     GROUP BY u.id
     ORDER BY score DESC
     LIMIT 10
-  `).all();
+  `);
   res.json(scores);
 });
 
@@ -448,4 +462,18 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`))
+// ===================================================================
+// STARTUP
+// ===================================================================
+
+async function main() {
+  await db.getDb(); // init DB before listening
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
+
+main().catch(err => {
+  console.error('Startup failed:', err);
+  process.exit(1);
+});

@@ -1,6 +1,6 @@
-.env
 node_modules/
-shadow-terminal.db
+.env
+data/
 missions.js
 *.db
 *.db-shm
