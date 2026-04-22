@@ -29,6 +29,14 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
 
+console.log('--- STARTUP INFO ---');
+console.log(`PORT: ${PORT}`);
+console.log(`NODE_ENV: ${process.env.NODE_ENV}`);
+console.log(`IS_PROD: ${IS_PROD}`);
+console.log(`PWD: ${process.cwd()}`);
+console.log(`__dirname: ${__dirname}`);
+console.log('--------------------');
+
 // Trust Railway proxy for rate limiting and cookies
 app.set('trust proxy', 1);
 
