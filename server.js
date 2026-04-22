@@ -26,8 +26,8 @@ const { authMiddleware } = require('./middleware');
 const pkg = require('./package.json');
 
 const app = express();
-// Force port 3000 as requested by user and configured in railway.toml
-const PORT = process.env.PORT || 3000;
+// Force port 3000 for Railway deployment
+const PORT = 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
 
 // Trust Railway proxy for rate limiting and cookies
@@ -39,38 +39,16 @@ app.use(compression());
 app.use(express.json());
 app.use(cookieParser());
 
-// Security
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-      fontSrc: ["'self'", "https://fonts.gstatic.com"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
-      connectSrc: ["'self'"],
-      imgSrc: ["'self'", "data:"],
-    }
-  },
-  hsts: IS_PROD ? { maxAge: 31536000, includeSubDomains: true } : false
-}));
+// Root Route - MUST be before static for reliability in some SPA setups
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
-// Serve static files (Required Fix 1 & 6)
+// Serve static files
 app.use(express.static(path.join(__dirname, 'public'), {
   maxAge: IS_PROD ? '1d' : '0',
-  etag: true,
-  index: false // We will handle the root route explicitly
+  etag: true
 }));
-
-// Root Route (Required Fix 2)
-app.get('/', (req, res) => {
-  console.log('Root route requested');
-  res.sendFile(path.join(__dirname, 'public', 'index.html'), (err) => {
-    if (err) {
-      console.error('Error sending index.html:', err);
-      res.status(500).send('Error loading the game shell');
-    }
-  });
-});
 
 // Health check
 app.get('/health', (req, res) => {
