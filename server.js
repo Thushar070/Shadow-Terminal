@@ -92,14 +92,38 @@ function stripHtml(str) {
 }
 
 function updateSessionTimer(session) {
-  const now = new Date();
-  const lastTickStr = session.last_tick;
-  const lastTick = new Date(lastTickStr + (lastTickStr.endsWith('Z') ? '' : 'Z'));
-  const elapsed = Math.floor((now - lastTick) / 1000);
+  if (!session || !session.last_tick) return;
+  
+  try {
+    const now = new Date();
+    let lastTickStr = session.last_tick;
+    
+    // Safety check for endsWith (only if it's a string)
+    if (typeof lastTickStr === 'string') {
+      if (!lastTickStr.endsWith('Z')) {
+        // Handle SQLite format (YYYY-MM-DD HH:MM:SS) vs ISO
+        if (!lastTickStr.includes('T') && lastTickStr.includes(' ')) {
+          lastTickStr = lastTickStr.replace(' ', 'T');
+        }
+        lastTickStr += 'Z';
+      }
+    }
+    
+    const lastTick = new Date(lastTickStr);
+    if (isNaN(lastTick.getTime())) {
+      console.warn('[TIMER] Invalid lastTick date:', session.last_tick);
+      session.last_tick = now.toISOString();
+      return;
+    }
 
-  if (elapsed > 0) {
-    session.timer_remaining = Math.max(0, session.timer_remaining - elapsed);
-    session.last_tick = now.toISOString();
+    const elapsed = Math.floor((now - lastTick) / 1000);
+
+    if (elapsed > 0) {
+      session.timer_remaining = Math.max(0, session.timer_remaining - elapsed);
+      session.last_tick = now.toISOString();
+    }
+  } catch (err) {
+    console.error('[TIMER] Error updating session timer:', err.message);
   }
 }
 
@@ -312,7 +336,11 @@ app.post('/api/command', authMiddleware, cmdLimiter, (req, res) => {
   // --- BUILT-IN COMMANDS ---
   if (command === 'help') {
     const m = MISSIONS[session.mission_idx];
-    const toolList = m.tools.map(t => `  ${t.name.padEnd(14)} — ${t.desc}`).join('\n');
+    if (!m) {
+      console.error('[COMMAND] Mission not found for idx:', session.mission_idx);
+      return res.status(400).json({ error: 'System error: Mission data mismatch' });
+    }
+    const toolList = m.tools.map(t => `  ${(t.name || '').padEnd(14)} — ${t.desc || ''}`).join('\n');
     return res.json({
       result: "info",
       response: `AVAILABLE TOOLS:\n${toolList}\n\nSYSTEM COMMANDS:\n  help           — Show this help\n  status         — Current mission info\n  profile        — Agent profile card\n  clear          — Clear terminal (local)\n  logout         — Disconnect session`
@@ -336,7 +364,20 @@ app.post('/api/command', authMiddleware, cmdLimiter, (req, res) => {
 
   // --- MISSION COMMAND MATCHING ---
   const mission = MISSIONS[session.mission_idx];
+  if (!mission) {
+    console.error('[COMMAND] Mission not found for idx:', session.mission_idx);
+    return res.status(400).json({ error: 'System error: Mission data mismatch' });
+  }
+
   const step = mission.steps[session.step_idx];
+  if (!step) {
+    console.warn('[COMMAND] No more steps or invalid step_idx:', session.step_idx);
+    // If they finished all steps but haven't moved to next mission
+    if (session.step_idx >= mission.steps.length) {
+       return res.status(400).json({ error: 'Mission objective complete. Move to NEXT MISSION.' });
+    }
+    return res.status(400).json({ error: 'System error: Step data mismatch' });
+  }
 
   // Case-insensitive, trimmed, partial match
   const matched = step.keys.some(k => {
@@ -488,7 +529,8 @@ app.get('*', (req, res) => {
 app.use((err, req, res, next) => {
   console.error('[ERROR]', err.stack);
   res.status(500).json({
-    error: IS_PROD ? 'Internal server error' : err.message
+    error: err.message, // Temporarily show full error for debugging
+    stack: IS_PROD ? undefined : err.stack
   });
 });
 

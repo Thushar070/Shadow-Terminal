@@ -16,11 +16,19 @@ let db;
 async function getDb() {
   if (db) return db;
   
-  db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
-  
-  initSchema();
-  return db;
+  console.log(`[DATABASE] Opening database at: ${dbPath}`);
+  try {
+    db = new Database(dbPath);
+    db.pragma('journal_mode = WAL');
+    console.log('[DATABASE] journal_mode=WAL set successfully.');
+    
+    initSchema();
+    console.log('[DATABASE] Schema initialized.');
+    return db;
+  } catch (err) {
+    console.error('[DATABASE] Fatal error during initialization:', err.message);
+    throw err;
+  }
 }
 
 /**
