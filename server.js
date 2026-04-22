@@ -49,21 +49,8 @@ app.use(compression());
 app.use(express.json());
 app.use(cookieParser());
 
-// Security
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-      fontSrc: ["'self'", "https://fonts.gstatic.com"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrcAttr: ["'unsafe-inline'"],  // Allow onclick handlers in HTML
-      connectSrc: ["'self'"],
-      imgSrc: ["'self'", "data:"],
-    }
-  },
-  hsts: IS_PROD ? { maxAge: 31536000, includeSubDomains: true } : false
-}));
+// Security - Disabled temporarily for deployment debugging
+// app.use(helmet(...));
 
 // Serve static files with caching
 app.use(express.static(path.join(__dirname, 'public'), {
@@ -141,7 +128,7 @@ function cookieOpts() {
   return {
     httpOnly: true,
     secure: IS_PROD,
-    sameSite: 'lax',
+    sameSite: IS_PROD ? 'none' : 'lax',
     maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
   };
 }
@@ -188,7 +175,10 @@ function checkAchievements(userId, session, missionIdx, final = false) {
 
 app.post('/api/register', authLimiter, (req, res) => {
   const { username, password } = req.body;
+  console.log(`[AUTH] Register attempt: ${username}`);
+  
   if (!username || !password || !/^[a-zA-Z0-9]{3,16}$/.test(username) || password.length < 8) {
+    console.log(`[AUTH] Register validation failed for: ${username}`);
     return res.status(400).json({ error: 'Username: 3-16 alphanumeric. Password: 8+ chars.' });
   }
 
@@ -205,8 +195,11 @@ app.post('/api/register', authLimiter, (req, res) => {
 
 app.post('/api/login', authLimiter, (req, res) => {
   const { username, password } = req.body;
+  console.log(`[AUTH] Login attempt: ${username}`);
+  
   const user = db.get('SELECT * FROM users WHERE username = ?', [username]);
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
+    console.log(`[AUTH] Login failed for: ${username}`);
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
