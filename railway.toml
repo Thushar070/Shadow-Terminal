@@ -5,6 +5,5 @@ builder = "nixpacks"
 startCommand = "node server.js"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 5
-
-[environments.production]
-NODE_ENV = "production"
+healthcheckPath = "/health"
+healthcheckTimeout = 30

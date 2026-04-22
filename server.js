@@ -26,6 +26,10 @@ const { authMiddleware } = require('./middleware');
 const pkg = require('./package.json');
 
 const app = express();
+
+// Railway injects PORT env var. We MUST listen on whatever Railway gives us,
+// because Railway's load balancer routes traffic to that exact port.
+// Locally it falls back to 3000.
 const PORT = process.env.PORT || 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
 
@@ -33,7 +37,6 @@ console.log('--- STARTUP INFO ---');
 console.log(`PORT: ${PORT}`);
 console.log(`NODE_ENV: ${process.env.NODE_ENV}`);
 console.log(`IS_PROD: ${IS_PROD}`);
-console.log(`PWD: ${process.cwd()}`);
 console.log(`__dirname: ${__dirname}`);
 console.log('--------------------');
 
@@ -46,18 +49,31 @@ app.use(compression());
 app.use(express.json());
 app.use(cookieParser());
 
-// Root Route - MUST be before static for reliability in some SPA setups
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+// Security
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      connectSrc: ["'self'"],
+      imgSrc: ["'self'", "data:"],
+    }
+  },
+  hsts: IS_PROD ? { maxAge: 31536000, includeSubDomains: true } : false
+}));
 
-// Serve static files
+// Serve static files with caching
 app.use(express.static(path.join(__dirname, 'public'), {
   maxAge: IS_PROD ? '1d' : '0',
   etag: true
 }));
 
-// Health check
+// ===================================================================
+// HEALTH CHECK
+// ===================================================================
+
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -65,30 +81,6 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     version: pkg.version
   });
-});
-
-// Cookie options — environment-aware
-function cookieOpts() {
-  return {
-    httpOnly: true,
-    secure: IS_PROD,
-    sameSite: 'strict',
-    domain: process.env.COOKIE_DOMAIN,
-    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
-  };
-}
-
-// Rate Limiting
-const authLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 10,
-  message: { error: 'Too many requests' }
-});
-
-const cmdLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 60,
-  message: { error: 'Command rate limit exceeded' }
 });
 
 // ===================================================================
@@ -142,6 +134,30 @@ function buildSessionResponse(session) {
     status: session.status
   };
 }
+
+// Cookie options — environment-aware
+function cookieOpts() {
+  return {
+    httpOnly: true,
+    secure: IS_PROD,
+    sameSite: 'strict',
+    domain: process.env.COOKIE_DOMAIN,
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+  };
+}
+
+// Rate Limiting
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  message: { error: 'Too many requests' }
+});
+
+const cmdLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  message: { error: 'Command rate limit exceeded' }
+});
 
 function checkAchievements(userId, session, missionIdx, final = false) {
   const newAchievements = [];
@@ -329,9 +345,11 @@ app.post('/api/command', authMiddleware, cmdLimiter, (req, res) => {
   const mission = MISSIONS[session.mission_idx];
   const step = mission.steps[session.step_idx];
 
+  // Case-insensitive, trimmed, partial match
   const matched = step.keys.some(k => {
     const kLower = k.toLowerCase();
     if (command === kLower) return true;
+    // Partial match: same base command and contains key arguments
     const cmdBase = command.split(' ')[0];
     const kBase = kLower.split(' ')[0];
     if (cmdBase === kBase) {
@@ -387,6 +405,7 @@ app.post('/api/command', authMiddleware, cmdLimiter, (req, res) => {
       timerRemaining: session.timer_remaining
     });
   } else {
+    // Wrong command
     session.wrong_streak++;
     let livesLost = 0;
     let timeBonus = 0;
@@ -462,7 +481,7 @@ app.get('/api/leaderboard', (req, res) => {
 });
 
 // ===================================================================
-// FALLBACK ROUTE — SPA Support (Required Fix 3 & 4)
+// SERVE FRONTEND
 // ===================================================================
 
 app.get('*', (req, res) => {
@@ -481,19 +500,20 @@ app.use((err, req, res, next) => {
 });
 
 // ===================================================================
-// STARTUP & GRACEFUL SHUTDOWN (Required Fix 5)
+// STARTUP & GRACEFUL SHUTDOWN
 // ===================================================================
 
 let server;
 
 async function main() {
+  // Initialize DB first, then listen
+  console.log('Initializing database...');
+  await db.getDb();
+  console.log('Database initialized.');
+
   server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
   });
-  
-  console.log('Initializing database...');
-  await db.getDb(); 
-  console.log('Database initialized.');
 }
 
 process.on('SIGTERM', () => {
