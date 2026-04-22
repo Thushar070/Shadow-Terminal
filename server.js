@@ -56,12 +56,19 @@ app.use(helmet({
 // Serve static files (Required Fix 1 & 6)
 app.use(express.static(path.join(__dirname, 'public'), {
   maxAge: IS_PROD ? '1d' : '0',
-  etag: true
+  etag: true,
+  index: false // We will handle the root route explicitly
 }));
 
 // Root Route (Required Fix 2)
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  console.log('Root route requested');
+  res.sendFile(path.join(__dirname, 'public', 'index.html'), (err) => {
+    if (err) {
+      console.error('Error sending index.html:', err);
+      res.status(500).send('Error loading the game shell');
+    }
+  });
 });
 
 // Health check
